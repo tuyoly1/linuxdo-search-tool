@@ -27,6 +27,11 @@ config.toml WSL 代理
 
 页面会生成多张搜索卡。建议优先使用 `Google 推荐`，再根据需要使用 `Bing 备用` 或 `L 站内搜`。
 
+## 版本
+
+- 桌面版：`index.html`
+- 手机优化版：`mobile/index.html`
+
 ## 搜索策略
 
 这个工具融合了几种常用方法：
@@ -46,4 +51,3 @@ config.toml WSL 代理
 ## 隐私
 
 项目是纯前端静态页面。搜索记录保存在浏览器本地 `localStorage` 中，不会上传到服务器。
-
