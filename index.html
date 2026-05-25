@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Linux.do 搜索融合台</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="masthead">
+        <div class="brand-block">
+          <div class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false">
+              <path d="M10.8 4.4a6.4 6.4 0 0 1 5 10.4l3.9 3.9-1.5 1.5-3.9-3.9a6.4 6.4 0 1 1-3.5-11.9Zm0 2.1a4.3 4.3 0 1 0 0 8.6 4.3 4.3 0 0 0 0-8.6Z"></path>
+            </svg>
+          </div>
+          <div>
+            <h1>Linux.do 搜索融合台</h1>
+            <p id="statusLine">把一个问题拆成几组更容易命中的搜索入口。</p>
+          </div>
+        </div>
+        <div class="mast-actions">
+          <button class="icon-btn" id="savePlanBtn" type="button" title="保存当前搜索">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h12l2 2v14H5V4Zm2 2v12h10V7.1L15.9 6H7Zm2 2h6v2H9V8Zm0 4h6v2H9v-2Z"></path></svg>
+            <span>保存</span>
+          </button>
+          <button class="icon-btn primary" id="openBestBtn" type="button" title="打开优先搜索">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6h-2V7.4l-7.3 7.3-1.4-1.4L16.6 6H14V4ZM5 6h6v2H7v9h9v-4h2v6H5V6Z"></path></svg>
+            <span>打开优先</span>
+          </button>
+        </div>
+      </header>
+
+      <section class="workspace">
+        <section class="query-panel" aria-label="搜索条件">
+          <label class="field main-field" for="topicInput">
+            <span>想找什么</span>
+            <textarea id="topicInput" rows="4" placeholder="例如：Claude Code Windows 配置，Codex config.toml 模型供应商，STM32 MFRC522 门禁"></textarea>
+          </label>
+
+          <div class="field-grid">
+            <label class="field" for="contextInput">
+              <span>环境或限定词</span>
+              <input id="contextInput" type="text" placeholder="Windows / WSL / Android / STM32 / VS Code">
+            </label>
+            <label class="field" for="datePreset">
+              <span>时间范围</span>
+              <select id="datePreset">
+                <option value="none">不限时间</option>
+                <option value="30">最近 30 天</option>
+                <option value="90" selected>最近 90 天</option>
+                <option value="180">最近半年</option>
+                <option value="365">最近一年</option>
+                <option value="custom">自定义日期后</option>
+              </select>
+            </label>
+            <label class="field custom-date hidden" for="customAfter">
+              <span>起始日期</span>
+              <input id="customAfter" type="date">
+            </label>
+          </div>
+
+          <div class="toggle-row" aria-label="搜索开关">
+            <label class="toggle">
+              <input id="exactToggle" type="checkbox">
+              <span>优先精确短语</span>
+            </label>
+            <label class="toggle">
+              <input id="cleanToggle" type="checkbox" checked>
+              <span>排除水帖</span>
+            </label>
+            <label class="toggle">
+              <input id="commentsToggle" type="checkbox" checked>
+              <span>关注评论反馈</span>
+            </label>
+          </div>
+
+          <div class="quick-strip" id="quickStrip" aria-label="常用限定词"></div>
+        </section>
+
+        <section class="insight-panel" aria-label="搜索概览">
+          <div class="metric">
+            <strong id="cardCount">0</strong>
+            <span>搜索卡</span>
+          </div>
+          <div class="metric">
+            <strong id="keywordCount">0</strong>
+            <span>关键词</span>
+          </div>
+          <div class="metric wide">
+            <strong id="intentText">待输入</strong>
+            <span>当前判断</span>
+          </div>
+        </section>
+      </section>
+
+      <section class="result-tools" aria-label="结果工具">
+        <div class="tabs" id="categoryTabs"></div>
+        <div class="tool-actions">
+          <button class="icon-btn" id="copyVisibleBtn" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 7h11v13H8V7Zm2 2v9h7V9h-7ZM5 4h11v2H7v9H5V4Z"></path></svg>
+            <span>复制当前</span>
+          </button>
+          <button class="icon-btn" id="resetBtn" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.6 6.6A7.5 7.5 0 1 1 4.5 12h2A5.5 5.5 0 1 0 8 8l2.3 2.3H4V4l2.6 2.6Z"></path></svg>
+            <span>重置</span>
+          </button>
+        </div>
+      </section>
+
+      <section class="content-grid">
+        <section class="results" aria-label="搜索卡片">
+          <div id="emptyState" class="empty-state">
+            <h2>输入一个目标，搜索卡会自动生成</h2>
+            <p>适合拿来找教程、排错、工具推荐、最新反馈和可用性验证。</p>
+          </div>
+          <div id="cardsGrid" class="cards-grid"></div>
+        </section>
+
+        <aside class="side-rail" aria-label="资料沉淀">
+          <section class="rail-section">
+            <div class="rail-head">
+              <h2>优先入口</h2>
+              <button id="copyPriorityBtn" class="text-btn" type="button">复制</button>
+            </div>
+            <div id="priorityList" class="priority-list"></div>
+          </section>
+
+          <section class="rail-section">
+            <div class="rail-head">
+              <h2>搜索记录</h2>
+              <button id="clearHistoryBtn" class="text-btn" type="button">清空</button>
+            </div>
+            <div id="historyList" class="history-list"></div>
+          </section>
+
+          <section class="rail-section">
+            <div class="rail-head">
+              <h2>检索清单</h2>
+              <button id="copyTemplateBtn" class="text-btn" type="button">复制</button>
+            </div>
+            <pre id="questionTemplate" class="template-box"></pre>
+          </section>
+        </aside>
+      </section>
+    </main>
+
+    <section id="copyFallback" class="copy-fallback hidden" role="dialog" aria-modal="true" aria-labelledby="copyFallbackTitle">
+      <div class="copy-fallback-panel">
+        <div class="rail-head">
+          <h2 id="copyFallbackTitle">手动复制</h2>
+          <button id="closeFallbackBtn" class="text-btn" type="button">关闭</button>
+        </div>
+        <textarea id="fallbackText" readonly></textarea>
+      </div>
+    </section>
+
+    <script src="./app.js" defer></script>
+  </body>
+</html>
