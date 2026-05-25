@@ -1,5 +1,10 @@
-const STORAGE_KEY = "linuxdoSearchToolMobileState";
-const HISTORY_KEY = "linuxdoSearchToolMobileHistory";
+const STORAGE_KEY = "linuxdoSearchToolState";
+const HISTORY_KEY = "linuxdoSearchToolHistory";
+const THEME_KEY = "linuxdoSearchToolTheme";
+
+const Core = window.LinuxdoSearchCore;
+const categoryLabels = Core.config.categoryLabels;
+const defaultExcludeWords = Core.config.defaultNoiseWords.join(" ");
 
 const els = {
   statusLine: document.querySelector("#statusLine"),
@@ -11,6 +16,8 @@ const els = {
   exactToggle: document.querySelector("#exactToggle"),
   cleanToggle: document.querySelector("#cleanToggle"),
   commentsToggle: document.querySelector("#commentsToggle"),
+  excludeInput: document.querySelector("#excludeInput"),
+  themeMode: document.querySelector("#themeMode"),
   quickStrip: document.querySelector("#quickStrip"),
   cardCount: document.querySelector("#cardCount"),
   keywordCount: document.querySelector("#keywordCount"),
@@ -35,6 +42,11 @@ const els = {
   toggleAdvancedBtn: document.querySelector("#toggleAdvancedBtn"),
 };
 
+const svg = {
+  open: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6h-2V7.4l-7.3 7.3-1.4-1.4L16.6 6H14V4ZM5 6h6v2H7v9h9v-4h2v6H5V6Z"></path></svg>',
+  copy: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 7h11v13H8V7Zm2 2v9h7V9h-7ZM5 4h11v2H7v9H5V4Z"></path></svg>',
+};
+
 const memoryStore = new Map();
 let storageWarningShown = false;
 
@@ -42,64 +54,6 @@ const state = {
   activeCategory: "all",
   cards: [],
   history: readJson(HISTORY_KEY, []),
-};
-
-const categoryLabels = {
-  all: "全部",
-  precise: "全站",
-  title: "标题",
-  tutorial: "教程",
-  issue: "排错",
-  tool: "工具",
-  config: "配置",
-  latest: "最新",
-  source: "溯源",
-};
-
-const quickTerms = [
-  "Codex",
-  "Claude Code",
-  "ChatGPT",
-  "OpenAI API",
-  "config.toml",
-  "model_provider",
-  "Windows",
-  "WSL",
-  "VS Code",
-  "代理",
-  "中转",
-  "公益站 API",
-  "Android",
-  "STM32",
-  "MFRC522",
-];
-
-const stopWords = new Set([
-  "我",
-  "想",
-  "想要",
-  "请问",
-  "有没有",
-  "如何",
-  "怎么",
-  "怎样",
-  "什么",
-  "哪个",
-  "哪里",
-  "一下",
-  "相关",
-  "问题",
-  "求助",
-  "找",
-  "找找",
-  "帮助",
-]);
-
-const noiseWords = ["抽奖", "闲聊", "纯水", "水贴", "签到", "灌水"];
-
-const svg = {
-  open: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6h-2V7.4l-7.3 7.3-1.4-1.4L16.6 6H14V4ZM5 6h6v2H7v9h9v-4h2v6H5V6Z"></path></svg>',
-  copy: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 7h11v13H8V7Zm2 2v9h7V9h-7ZM5 4h11v2H7v9H5V4Z"></path></svg>',
 };
 
 function readJson(key, fallback) {
@@ -135,361 +89,41 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
-function compact(value) {
-  return String(value || "")
-    .replace(/[？?。！!]+$/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
+function debounce(fn, wait = 300) {
+  let timer = 0;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), wait);
+  };
 }
 
-function stripQuestionLead(value) {
-  return compact(value).replace(/^(我想|想要|请问|有没有|如何|怎么|怎样|帮我|求助)\s*/i, "");
-}
+const scheduleRender = debounce(() => renderAll(), 300);
 
-function tokenize(value) {
-  const normalized = String(value || "")
-    .replace(/[，、；;|/]+/g, " ")
-    .replace(/[“”]/g, '"');
-  const matches = normalized.match(/"[^"]+"|[^\s]+/g) || [];
-  return matches
-    .map((item) => item.replace(/^"|"$/g, ""))
-    .map((item) => item.replace(/^[,，.。?？!！:：]+|[,，.。?？!！:：]+$/g, ""))
-    .map((item) => item.trim())
-    .filter((item) => item && !stopWords.has(item));
-}
-
-function uniq(values) {
-  const seen = new Set();
-  const output = [];
-  for (const value of values.filter(Boolean)) {
-    const key = String(value).toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    output.push(value);
-  }
-  return output;
-}
-
-function quote(value) {
-  const safe = compact(value).replaceAll('"', "");
-  return safe ? `"${safe}"` : "";
-}
-
-function joinParts(parts) {
-  return parts.filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
-}
-
-function flattenTerms(values) {
-  return values.flatMap((value) => (Array.isArray(value) ? flattenTerms(value) : tokenize(value)));
-}
-
-function termsWith(model, additions = []) {
-  return uniq([...model.allTokens, ...flattenTerms(additions)]);
-}
-
-function termsNotIn(model, additions = []) {
-  const existing = new Set(model.allTokens.map((item) => item.toLowerCase()));
-  return uniq(flattenTerms(additions)).filter((term) => !existing.has(term.toLowerCase()));
-}
-
-function orGroup(words) {
-  return `(${words.map(quote).join(" OR ")})`;
-}
-
-function dateAgo(days) {
-  const date = new Date();
-  date.setDate(date.getDate() - Number(days));
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function selectedAfterDate() {
-  const preset = els.datePreset.value;
-  if (preset === "none") return "";
-  if (preset === "custom") return els.customAfter.value || dateAgo(90);
-  return dateAgo(preset);
-}
-
-function detectIntents(text) {
-  const value = text.toLowerCase();
-  const intents = [];
-  if (/报错|错误|失败|失效|无法|不能|崩溃|解决|fix|error|failed/.test(value)) intents.push("排错");
-  if (/教程|保姆级|学习|记录|踩坑|整理|怎么|如何|guide|tutorial/.test(value)) intents.push("教程");
-  if (/工具|推荐|开源|整合|一键|替代|项目|github|tool/.test(value)) intents.push("工具");
-  if (/最新|现在|可用|失效|更新|替代|today|latest/.test(value)) intents.push("最新");
-  if (/配置|安装|环境变量|代理|windows|wsl|vscode|config|settings/.test(value)) intents.push("配置");
-  return uniq(intents);
-}
-
-function buildModel() {
-  const topic = stripQuestionLead(els.topicInput.value);
-  const context = compact(els.contextInput.value);
-  const topicTokens = tokenize(topic);
-  const contextTokens = tokenize(context);
-  const allTokens = uniq([...topicTokens, ...contextTokens]);
-  const afterDate = selectedAfterDate();
-  const exactBase = topic ? joinParts([quote(topic), termsNotIn({ allTokens: topicTokens }, contextTokens).join(" ")]) : allTokens.join(" ");
-  const looseBase = allTokens.join(" ");
-  const base = els.exactToggle.checked ? exactBase : looseBase;
-  const negative = els.cleanToggle.checked ? noiseWords.map((word) => `-${word}`).join(" ") : "";
-  const dateOperator = afterDate ? `after:${afterDate}` : "";
-  const intents = detectIntents(`${topic} ${context}`);
-
+function currentInput() {
   return {
-    topic,
-    context,
-    topicTokens,
-    contextTokens,
-    allTokens,
-    base,
-    looseBase,
-    negative,
-    dateOperator,
-    dateInternal: afterDate ? `after:${afterDate}` : "",
-    afterDate,
+    topic: els.topicInput.value,
+    context: els.contextInput.value,
+    datePreset: els.datePreset.value,
+    customAfter: els.customAfter.value,
     exact: els.exactToggle.checked,
     clean: els.cleanToggle.checked,
     comments: els.commentsToggle.checked,
-    intents,
+    excludeWords: els.excludeInput.value || defaultExcludeWords,
   };
 }
 
-function searchUrl(engine, query) {
-  const encoded = encodeURIComponent(query);
-  if (engine === "google") return `https://www.google.com/search?q=${encoded}`;
-  if (engine === "bing") return `https://www.bing.com/search?q=${encoded}`;
-  return `https://linux.do/search?q=${encoded}`;
+function currentThemeMode() {
+  return els.themeMode?.value || "system";
 }
 
-function googleQuery(model, additions = [], options = {}) {
-  const { date = true, title = false, orWords = [], noise = true } = options;
-  const titlePhrase = model.topic || model.topicTokens.slice(0, 3).join(" ") || model.looseBase;
-  const focus = title ? `intitle:${quote(titlePhrase)}` : model.base;
-  const titleContext = title ? model.contextTokens.join(" ") : "";
-  return joinParts([
-    "site:linux.do",
-    focus,
-    titleContext,
-    termsNotIn(model, additions).join(" "),
-    date ? model.dateOperator : "",
-    orWords.length ? orGroup(orWords) : "",
-    noise ? model.negative : "",
-  ]);
-}
-
-function bingQuery(model, additions = []) {
-  return joinParts(["site:linux.do", termsWith(model, additions).join(" ")]);
-}
-
-function linuxQuery(model, additions = [], filters = [], options = {}) {
-  const { date = true } = options;
-  return joinParts([termsWith(model, additions).join(" "), date ? model.dateInternal : "", filters.join(" ")]);
-}
-
-function linkNote(engine) {
-  if (engine === "google") return "实测最稳，推荐优先打开";
-  if (engine === "bing") return "实测可能出现验证，适合作为备用入口";
-  return "站内搜索可能先显示请稍候，等待后仍不出结果时改用 Google";
-}
-
-function makeLink(label, engine, query, primary = false) {
-  return {
-    label,
-    engine,
-    query,
-    primary,
-    note: linkNote(engine),
-    url: searchUrl(engine, query),
-  };
-}
-
-function makeCard({ id, category, title, desc, priority, google, bing, linux = [], web, timeFiltered = true }) {
-  const links = [];
-  if (google) links.push(makeLink("Google 推荐", "google", google, true));
-  if (bing) links.push(makeLink("Bing 备用", "bing", bing));
-  for (const item of linux) {
-    links.push(makeLink(item.label, "linux", item.query));
+function applyThemeMode(mode) {
+  const normalized = ["system", "light", "dark"].includes(mode) ? mode : "system";
+  if (els.themeMode) els.themeMode.value = normalized;
+  if (normalized === "system") {
+    document.documentElement.removeAttribute("data-theme");
+  } else {
+    document.documentElement.dataset.theme = normalized;
   }
-  if (web) links.push(makeLink("官网线索", "google", web));
-  return {
-    id,
-    category,
-    title,
-    desc,
-    priority,
-    timeFiltered,
-    links,
-  };
-}
-
-function buildCards(model) {
-  if (!model.base && !model.looseBase) return [];
-
-  const cards = [
-    makeCard({
-      id: "precise-site",
-      category: "precise",
-      title: "全站不限时入口",
-      desc: "先拿到最大召回面，适合不知道关键词是否新旧时使用。",
-      priority: "P1",
-      timeFiltered: false,
-      google: googleQuery(model, [], { date: false }),
-      bing: bingQuery(model),
-      linux: [{ label: "L 站热度", query: linuxQuery(model, [], ["order:likes"], { date: false }) }],
-    }),
-    makeCard({
-      id: "title-match",
-      category: "title",
-      title: "标题优先",
-      desc: "适合找主题明确的教程、合集、工具贴。",
-      priority: "P1",
-      google: googleQuery(model, [], { title: true }),
-      bing: bingQuery(model),
-      linux: [{ label: "L 站标题", query: linuxQuery(model, [], ["in:title", "order:latest"]) }],
-    }),
-    makeCard({
-      id: "tutorial-main",
-      category: "tutorial",
-      title: "教程和踩坑记录",
-      desc: "优先找主楼信息完整、可照着做的帖子。",
-      priority: "P2",
-      google: googleQuery(model, [], { orWords: ["教程", "保姆级", "记录", "踩坑", "整理"] }),
-      bing: bingQuery(model, ["教程"]),
-      linux: [
-        { label: "L 站教程", query: linuxQuery(model, ["教程"], ["in:first", "order:likes"]) },
-        { label: "L 站踩坑", query: linuxQuery(model, ["踩坑"], ["in:first", "order:latest"]) },
-      ],
-    }),
-    makeCard({
-      id: "issue-fix",
-      category: "issue",
-      title: "报错和解决方案",
-      desc: "适合已经遇到错误、失效、配置失败的场景。",
-      priority: model.intents.includes("排错") ? "P1" : "P2",
-      google: googleQuery(model, [], { orWords: ["报错", "错误", "无法使用", "解决", "失效"] }),
-      bing: bingQuery(model, ["报错"]),
-      linux: [
-        { label: "L 站报错", query: linuxQuery(model, ["报错"], ["in:replies", "order:latest"]) },
-        { label: "L 站解决", query: linuxQuery(model, ["解决"], ["in:replies", "order:latest"]) },
-      ],
-    }),
-    makeCard({
-      id: "tool-share",
-      category: "tool",
-      title: "工具和整合方案",
-      desc: "适合找开源项目、脚本、一键包、替代工具。",
-      priority: model.intents.includes("工具") ? "P1" : "P3",
-      google: googleQuery(model, [], { orWords: ["开源", "分享", "推荐", "整合", "一键", "GitHub"] }),
-      bing: bingQuery(model, ["工具"]),
-      linux: [
-        { label: "L 站开源", query: linuxQuery(model, ["开源"], ["min_posts:5", "order:likes"]) },
-        { label: "L 站推荐", query: linuxQuery(model, ["推荐"], ["min_posts:5", "order:likes"]) },
-        { label: "L 站整合", query: linuxQuery(model, ["整合"], ["min_posts:5", "order:latest"]) },
-      ],
-    }),
-    makeCard({
-      id: "config-env",
-      category: "config",
-      title: "环境和配置",
-      desc: "专门找安装、配置文件、代理、环境变量相关内容。",
-      priority: model.intents.includes("配置") ? "P1" : "P2",
-      google: googleQuery(model, [], { orWords: ["配置", "安装", "环境变量", "代理", "config.toml", "settings.json"] }),
-      bing: bingQuery(model, ["配置"]),
-      linux: [
-        { label: "L 站配置", query: linuxQuery(model, ["配置"], ["in:first", "order:latest"]) },
-        { label: "L 站代理", query: linuxQuery(model, ["代理"], ["in:first", "order:latest"]) },
-      ],
-    }),
-    makeCard({
-      id: "latest-feedback",
-      category: "latest",
-      title: "最新可用性反馈",
-      desc: "适合信息变化快的 AI、API、账号、模型、插件问题。",
-      priority: model.intents.includes("最新") ? "P1" : "P2",
-      google: googleQuery(model, [], { orWords: model.comments ? ["可用", "失效", "替代", "更新", "反馈"] : [] }),
-      bing: bingQuery(model, ["最新"]),
-      linux: [
-        { label: "L 站最新", query: linuxQuery(model, [], ["order:latest"]) },
-        { label: "L 站可用", query: linuxQuery(model, ["可用"], ["in:replies", "order:latest"]) },
-        { label: "L 站失效", query: linuxQuery(model, ["失效"], ["in:replies", "order:latest"]) },
-      ],
-    }),
-    makeCard({
-      id: "source-check",
-      category: "source",
-      title: "官网和原始线索",
-      desc: "从 L 站讨论里找官网、文档、GitHub，再回到原始来源确认。",
-      priority: "P2",
-      google: googleQuery(model, [], { orWords: ["官网", "文档", "GitHub", "原始链接"] }),
-      bing: bingQuery(model, ["官网"]),
-      linux: [
-        { label: "L 站官网", query: linuxQuery(model, ["官网"], ["order:likes"]) },
-        { label: "L 站 GitHub", query: linuxQuery(model, ["GitHub"], ["order:likes"]) },
-      ],
-      web: joinParts([termsWith(model).join(" "), "official documentation GitHub docs"]),
-    }),
-  ];
-
-  if (/codex|claude code|claude|cursor/i.test(`${model.topic} ${model.context}`)) {
-    const extra = ["config.toml", "settings.json", "model_provider", "代理", "Windows", "WSL"];
-    cards.push(
-      makeCard({
-        id: "ai-config-special",
-        category: "config",
-        title: "AI 编程工具配置",
-        desc: "补上配置文件、模型供应商、代理这些高频限定词，自动去重。",
-        priority: "P1",
-        google: googleQuery(model, extra),
-        bing: bingQuery(model, ["config.toml", "model_provider"]),
-        linux: [
-          { label: "L 站 config", query: linuxQuery(model, ["config.toml"], ["in:first", "order:latest"]) },
-          { label: "L 站模型", query: linuxQuery(model, ["model_provider"], ["in:first", "order:latest"]) },
-        ],
-      }),
-    );
-  }
-
-  if (/api|中转|公益站|模型|openai|chatgpt/i.test(`${model.topic} ${model.context}`)) {
-    cards.push(
-      makeCard({
-        id: "api-status-special",
-        category: "latest",
-        title: "API 和中转状态",
-        desc: "重点看评论区最近反馈，旧帖很可能已经变了。",
-        priority: "P1",
-        google: googleQuery(model, ["可用", "失效", "额度", "风控", "替代"]),
-        bing: bingQuery(model, ["可用", "失效"]),
-        linux: [
-          { label: "L 站可用", query: linuxQuery(model, ["可用"], ["in:replies", "order:latest"]) },
-          { label: "L 站替代", query: linuxQuery(model, ["替代"], ["in:replies", "order:latest"]) },
-          { label: "L 站风控", query: linuxQuery(model, ["风控"], ["in:replies", "order:latest"]) },
-        ],
-      }),
-    );
-  }
-
-  if (/stm32|mfrc522|rc522|hal|cubemx/i.test(`${model.topic} ${model.context}`)) {
-    const extra = ["STM32", "HAL", "CubeMX", "RC522", "MFRC522", "接线", "报错"];
-    cards.push(
-      makeCard({
-        id: "embedded-debug-special",
-        category: "issue",
-        title: "嵌入式项目排错",
-        desc: "把芯片、模块、HAL、CubeMX、接线和报错放在同一组里搜。",
-        priority: "P1",
-        google: googleQuery(model, extra),
-        bing: bingQuery(model, ["HAL", "RC522", "报错"]),
-        linux: [
-          { label: "L 站 HAL", query: linuxQuery(model, ["HAL", "报错"], ["in:first", "order:likes"]) },
-          { label: "L 站接线", query: linuxQuery(model, ["接线"], ["in:first", "order:likes"]) },
-        ],
-      }),
-    );
-  }
-
-  return cards;
 }
 
 function priorityRank(priority) {
@@ -511,7 +145,7 @@ function visibleCards() {
 }
 
 function renderQuickTerms() {
-  els.quickStrip.innerHTML = quickTerms
+  els.quickStrip.innerHTML = Core.config.quickTerms
     .map((term) => `<button class="quick-chip" type="button" data-term="${escapeHtml(term)}">${escapeHtml(term)}</button>`)
     .join("");
 }
@@ -662,9 +296,9 @@ function renderTemplate(model) {
   ].join("\n");
 }
 
-function renderAll() {
-  const model = buildModel();
-  state.cards = buildCards(model);
+function renderAll(options = {}) {
+  const model = Core.buildModel(currentInput());
+  state.cards = Core.buildCards(model);
   if (state.activeCategory !== "all" && !state.cards.some((card) => card.category === state.activeCategory)) {
     state.activeCategory = "all";
   }
@@ -673,10 +307,11 @@ function renderAll() {
   renderPriorityList();
   renderInsights(model);
   renderTemplate(model);
-  persistInputs();
+  if (options.persist !== false) persistInputs();
 }
 
 function persistInputs() {
+  const themeMode = currentThemeMode();
   writeJson(STORAGE_KEY, {
     topic: els.topicInput.value,
     context: els.contextInput.value,
@@ -685,19 +320,28 @@ function persistInputs() {
     exact: els.exactToggle.checked,
     clean: els.cleanToggle.checked,
     comments: els.commentsToggle.checked,
+    excludeWords: els.excludeInput.value,
+    themeMode,
   });
+  writeJson(THEME_KEY, themeMode);
 }
 
 function restoreInputs() {
   const saved = readJson(STORAGE_KEY, null);
-  if (!saved) return;
-  els.topicInput.value = saved.topic || "";
-  els.contextInput.value = saved.context || "";
-  els.datePreset.value = saved.datePreset || "90";
-  els.customAfter.value = saved.customAfter || "";
-  els.exactToggle.checked = Boolean(saved.exact);
-  els.cleanToggle.checked = saved.clean !== false;
-  els.commentsToggle.checked = saved.comments !== false;
+  const savedTheme = readJson(THEME_KEY, saved?.themeMode || "system");
+  if (saved) {
+    els.topicInput.value = saved.topic || "";
+    els.contextInput.value = saved.context || "";
+    els.datePreset.value = saved.datePreset || "90";
+    els.customAfter.value = saved.customAfter || "";
+    els.exactToggle.checked = Boolean(saved.exact);
+    els.cleanToggle.checked = saved.clean !== false;
+    els.commentsToggle.checked = saved.comments !== false;
+    els.excludeInput.value = saved.excludeWords || defaultExcludeWords;
+  } else {
+    els.excludeInput.value = defaultExcludeWords;
+  }
+  applyThemeMode(savedTheme);
 }
 
 function datePresetText() {
@@ -708,7 +352,7 @@ function datePresetText() {
 }
 
 function saveCurrentPlan() {
-  const model = buildModel();
+  const model = Core.buildModel(currentInput());
   if (!model.topic && !model.context) {
     setStatus("先输入一个搜索目标");
     return;
@@ -722,10 +366,11 @@ function saveCurrentPlan() {
     exact: els.exactToggle.checked,
     clean: els.cleanToggle.checked,
     comments: els.commentsToggle.checked,
+    excludeWords: els.excludeInput.value,
     savedAt: new Date().toISOString(),
   };
-  const key = `${record.topic}__${record.context}__${record.datePreset}__${record.customAfter}`;
-  const withoutDuplicate = state.history.filter((item) => `${item.topic}__${item.context}__${item.datePreset}__${item.customAfter}` !== key);
+  const key = `${record.topic}__${record.context}__${record.datePreset}__${record.customAfter}__${record.excludeWords}`;
+  const withoutDuplicate = state.history.filter((item) => `${item.topic}__${item.context}__${item.datePreset}__${item.customAfter}__${item.excludeWords || ""}` !== key);
   state.history = [record, ...withoutDuplicate].slice(0, 10);
   writeJson(HISTORY_KEY, state.history);
   renderHistory();
@@ -742,6 +387,7 @@ function restoreHistory(index) {
   els.exactToggle.checked = Boolean(item.exact);
   els.cleanToggle.checked = item.clean !== false;
   els.commentsToggle.checked = item.comments !== false;
+  els.excludeInput.value = item.excludeWords || defaultExcludeWords;
   syncCustomDate();
   renderAll();
   setStatus("已恢复搜索记录");
@@ -805,11 +451,7 @@ function openBest() {
     return;
   }
   const opened = window.open(entry.link.url, "_blank", "noopener");
-  if (opened) {
-    setStatus(`已打开：${entry.card.title}`);
-  } else {
-    setStatus("浏览器拦截了弹窗，请用右侧优先入口逐个打开");
-  }
+  setStatus(opened ? `已打开：${entry.card.title}` : "浏览器拦截了弹窗，请用优先入口逐个打开");
 }
 
 function syncCustomDate() {
@@ -818,9 +460,9 @@ function syncCustomDate() {
 
 function addQuickTerm(term) {
   const target = els.topicInput.value.trim() ? els.contextInput : els.topicInput;
-  const current = compact(target.value);
+  const current = Core.compact(target.value);
   if (current.toLowerCase().includes(term.toLowerCase())) return;
-  target.value = compact(`${current} ${term}`);
+  target.value = Core.compact(`${current} ${term}`);
   renderAll();
 }
 
@@ -832,6 +474,7 @@ function resetAll() {
   els.exactToggle.checked = false;
   els.cleanToggle.checked = true;
   els.commentsToggle.checked = true;
+  els.excludeInput.value = defaultExcludeWords;
   state.activeCategory = "all";
   syncCustomDate();
   renderAll();
@@ -839,8 +482,8 @@ function resetAll() {
 }
 
 function bindEvents() {
-  [els.topicInput, els.contextInput, els.customAfter].forEach((input) => {
-    input.addEventListener("input", renderAll);
+  [els.topicInput, els.contextInput, els.customAfter, els.excludeInput].forEach((input) => {
+    input.addEventListener("input", scheduleRender);
   });
 
   [els.exactToggle, els.cleanToggle, els.commentsToggle].forEach((input) => {
@@ -850,6 +493,12 @@ function bindEvents() {
   els.datePreset.addEventListener("change", () => {
     syncCustomDate();
     renderAll();
+  });
+
+  els.themeMode.addEventListener("change", () => {
+    applyThemeMode(currentThemeMode());
+    renderAll();
+    setStatus("已更新主题偏好");
   });
 
   els.quickStrip.addEventListener("click", (event) => {
@@ -914,15 +563,22 @@ function bindEvents() {
     renderHistory();
     setStatus("已清空搜索记录");
   });
+
+  const media = window.matchMedia?.("(prefers-color-scheme: dark)");
+  media?.addEventListener?.("change", () => {
+    if (currentThemeMode() === "system") applyThemeMode("system");
+  });
 }
 
 function runSelfTest() {
-  const model = buildModel();
+  const model = Core.buildModel(currentInput());
   return {
     hasTopicField: Boolean(els.topicInput),
     cards: state.cards.length,
     visibleCards: visibleCards().length,
     keywords: model.allTokens,
+    excludeWords: model.excludeWords,
+    themeMode: currentThemeMode(),
     priorityEntries: priorityEntries().length,
     firstPriorityUrl: priorityEntries()[0]?.link.url || "",
     templateLength: els.questionTemplate.textContent.length,
@@ -934,6 +590,6 @@ renderQuickTerms();
 syncCustomDate();
 bindEvents();
 renderHistory();
-renderAll();
+renderAll({ persist: false });
 
 globalThis.__linuxdoSearchSelfTest = runSelfTest;

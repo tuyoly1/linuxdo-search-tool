@@ -3,7 +3,17 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="color-scheme" content="light dark">
     <title>Linux.do 搜索融合台 Mobile</title>
+    <script>
+      (() => {
+        try {
+          const raw = localStorage.getItem("linuxdoSearchToolTheme");
+          const mode = raw ? JSON.parse(raw) : "system";
+          if (mode === "light" || mode === "dark") document.documentElement.dataset.theme = mode;
+        } catch {}
+      })();
+    </script>
     <link rel="stylesheet" href="./styles.css">
   </head>
   <body>
@@ -75,6 +85,18 @@
             <span>起始日期</span>
             <input id="customAfter" type="date">
           </label>
+          <label class="field" for="excludeInput">
+            <span>排除词</span>
+            <input id="excludeInput" type="text" placeholder="抽奖 闲聊 纯水 水贴 签到 灌水">
+          </label>
+          <label class="field" for="themeMode">
+            <span>主题</span>
+            <select id="themeMode">
+              <option value="system">跟随系统</option>
+              <option value="light">亮色</option>
+              <option value="dark">暗色</option>
+            </select>
+          </label>
         </div>
 
         <div class="toggle-row">
@@ -144,6 +166,7 @@
       </div>
     </section>
 
+    <script src="../shared/search-core.js" defer></script>
     <script src="./app.js" defer></script>
   </body>
 </html>
